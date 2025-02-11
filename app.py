@@ -7,14 +7,18 @@ import csv
 from datetime import datetime, timedelta
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
+from tkinter import simpledialog
+from PIL import Image, ImageTk  # For embedding images
 import uuid  # For generating random names
 
 # Paths
 ENCODINGS_DIR = "encodings"
+IMAGES_DIR = "images"
 CSV_FILE = "users.csv"
 
-# Ensure encoding directory exists
+# Ensure encoding and images directories exist
 os.makedirs(ENCODINGS_DIR, exist_ok=True)
+os.makedirs(IMAGES_DIR, exist_ok=True)
 
 # Load registered users from CSV and encodings directory
 def load_registered_users():
@@ -23,12 +27,21 @@ def load_registered_users():
         with open(CSV_FILE, "r") as file:
             reader = csv.reader(file)
             for row in reader:
-                if len(row) != 2:
+                if len(row) != 3:  # Expecting name, encoding_path, image_path
                     continue
-                name, encoding_path = row
+                name, encoding_path, image_path = row
                 if os.path.exists(encoding_path):
-                    registered_users[name] = np.load(encoding_path)  # Load encodings properly
+                    registered_users[name] = {
+                        "encoding": np.load(encoding_path),
+                        "image_path": image_path
+                    }
     return registered_users
+
+# Save user data to CSV
+def save_user_data(name, encoding_path, image_path):
+    with open(CSV_FILE, "a", newline="") as file:
+        writer = csv.writer(file)
+        writer.writerow([name, encoding_path, image_path])
 
 # Function to register new user manually
 def register_user():
@@ -52,16 +65,17 @@ def register_user():
     if encoding:
         encoding = encoding[0]  # Extract the first encoding
         encoding_path = os.path.join(ENCODINGS_DIR, f"{name}.npy")
+        image_path = os.path.join(IMAGES_DIR, f"{name}.jpg")
         
-        # Save encoding
+        # Save encoding and image
         np.save(encoding_path, encoding)
-
+        cv2.imwrite(image_path, cv2.cvtColor(cv2.imread(file_path), cv2.COLOR_BGR2RGB))
+        
         # Save to CSV
-        with open(CSV_FILE, "a", newline="") as file:
-            writer = csv.writer(file)
-            writer.writerow([name, encoding_path])
-
-        registered_users[name] = encoding  # Store in memory
+        save_user_data(name, encoding_path, image_path)
+        
+        # Add to registered users
+        registered_users[name] = {"encoding": encoding, "image_path": image_path}
         messagebox.showinfo("Success", "User Registered Successfully")
     
     else:
@@ -118,8 +132,8 @@ def start_tracking():
             name = "Unknown"
             min_distance = 0.6  # Threshold for best match
             
-            for registered_name, registered_encoding in registered_users.items():
-                distance = face_recognition.face_distance([registered_encoding], face_encoding)[0]
+            for registered_name, user_data in registered_users.items():
+                distance = face_recognition.face_distance([user_data["encoding"]], face_encoding)[0]
                 if distance < min_distance:
                     min_distance = distance
                     name = registered_name
@@ -128,26 +142,28 @@ def start_tracking():
             if name == "Unknown":
                 # Check if the face encoding already exists in the system
                 is_duplicate = False
-                for existing_encoding in registered_users.values():
-                    if face_recognition.face_distance([existing_encoding], face_encoding)[0] < 0.6:
+                for existing_name, user_data in registered_users.items():
+                    distance = face_recognition.face_distance([user_data["encoding"]], face_encoding)[0]
+                    if distance < 0.5:  # Lower threshold for stricter matching
                         is_duplicate = True
+                        name = existing_name  # Assign the existing user's name
                         break
-                
+
                 if not is_duplicate:
                     # Generate a random name and register the user
                     random_name = generate_random_name()
                     encoding_path = os.path.join(ENCODINGS_DIR, f"{random_name}.npy")
-                    
-                    # Save encoding
+                    image_path = os.path.join(IMAGES_DIR, f"{random_name}.jpg")
+
+                    # Save encoding and image
                     np.save(encoding_path, face_encoding)
-                    
+                    cv2.imwrite(image_path, cv2.cvtColor(frame[top*2:bottom*2, left*2:right*2], cv2.COLOR_BGR2RGB))
+
                     # Append to CSV
-                    with open(CSV_FILE, "a", newline="") as file:
-                        writer = csv.writer(file)
-                        writer.writerow([random_name, encoding_path])
-                    
+                    save_user_data(random_name, encoding_path, image_path)
+
                     # Add to registered users
-                    registered_users[random_name] = face_encoding
+                    registered_users[random_name] = {"encoding": face_encoding, "image_path": image_path}
                     name = random_name  # Update the name to the newly registered user
             
             # Add the user to the detected_users set
@@ -202,7 +218,7 @@ def start_tracking():
     # Generate report (exclude unknown users)
     with open("user_tracking_report.csv", "w", newline='') as file:
         writer = csv.writer(file)
-        writer.writerow(["Username", "Start Time", "End Time", "Duration (HH:MM:SS)"])
+        writer.writerow(["Username", "Image", "Start Time", "End Time", "Duration (HH:MM:SS)"])
         for name, data in tracking_data.items():
             if name == "Unknown":  # Skip unknown users from the report
                 continue
@@ -210,6 +226,7 @@ def start_tracking():
                 start_time, end_time = interval
                 duration = round(end_time - start_time, 1) if end_time is not None else 0
                 writer.writerow([name, 
+                                 registered_users[name]["image_path"], 
                                  time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(start_time)), 
                                  time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(end_time)) if end_time else "N/A",
                                  format_time(duration)])
@@ -233,7 +250,7 @@ def view_report():
     user_dropdown.pack(pady=5)
 
     # Treeview for displaying the report
-    columns = ("Username", "Start Time", "End Time", "Duration (HH:MM:SS)")
+    columns = ("Username", "Image", "Start Time", "End Time", "Duration (HH:MM:SS)")
     tree = ttk.Treeview(report_window, columns=columns, show="headings")
     for col in columns:
         tree.heading(col, text=col)
@@ -250,9 +267,9 @@ def view_report():
                 reader = csv.reader(file)
                 next(reader)  # Skip header
                 for row in reader:
-                    username, start_time, end_time, duration = row
+                    username, image_path, start_time, end_time, duration = row
                     if selected_user == "All" or username == selected_user:
-                        tree.insert("", "end", values=(username, start_time, end_time, duration))
+                        tree.insert("", "end", values=(username, image_path, start_time, end_time, duration))
 
     # Button to refresh the report
     tk.Button(report_window, text="Refresh Report", command=update_report).pack(pady=10)
@@ -260,15 +277,144 @@ def view_report():
     # Initial load of the report
     update_report()
 
+# Function to manage users
+def manage_users():
+    # Create a new window for managing users
+    users_window = tk.Toplevel(root)
+    users_window.title("Manage Users")
+    users_window.geometry("800x600")
+
+    # Treeview for displaying users
+    columns = ("Username", "Image")
+    tree = ttk.Treeview(users_window, columns=columns, show="headings")
+    for col in columns:
+        tree.heading(col, text=col)
+        tree.column(col, width=150)
+    tree.pack(fill="both", expand=True, padx=10, pady=10)
+
+    # Populate the treeview with registered users
+    for name, data in registered_users.items():
+        tree.insert("", "end", values=(name, data["image_path"]))
+
+    # Function to delete a user
+    def delete_user():
+        selected_item = tree.selection()
+        if not selected_item:
+            messagebox.showerror("Error", "No user selected")
+            return
+        name = tree.item(selected_item)["values"][0]
+        if name not in registered_users:
+            messagebox.showerror("Error", "User not found in the system")
+            return
+        data = registered_users[name]  # Retrieve the user's data
+        try:
+            os.remove(os.path.join(ENCODINGS_DIR, f"{name}.npy"))  # Remove encoding file
+            os.remove(data["image_path"])  # Remove image file
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to delete files: {e}")
+            return
+        del registered_users[name]  # Remove from memory
+        tree.delete(selected_item)  # Remove from Treeview
+        # Rewrite the CSV file
+        try:
+            with open(CSV_FILE, "w", newline="") as file:
+                writer = csv.writer(file)
+                for name, data in registered_users.items():
+                    writer.writerow([name, os.path.join(ENCODINGS_DIR, f"{name}.npy"), data["image_path"]])
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to update CSV file: {e}")
+            return
+        messagebox.showinfo("Success", "User deleted successfully")
+
+    # Function to update a user's name
+    def update_username():
+        selected_item = tree.selection()
+        if not selected_item:
+            messagebox.showerror("Error", "No user selected")
+            return
+        old_name = tree.item(selected_item)["values"][0]
+        new_name = simpledialog.askstring("Update Username", "Enter new username:")
+        if not new_name:
+            return
+        if new_name in registered_users:
+            messagebox.showerror("Error", "Username already exists")
+            return
+        # Update registered_users dictionary
+        registered_users[new_name] = registered_users.pop(old_name)
+        # Rename files
+        old_encoding_path = os.path.join(ENCODINGS_DIR, f"{old_name}.npy")
+        new_encoding_path = os.path.join(ENCODINGS_DIR, f"{new_name}.npy")
+        os.rename(old_encoding_path, new_encoding_path)
+        old_image_path = registered_users[new_name]["image_path"]
+        new_image_path = os.path.join(IMAGES_DIR, f"{new_name}.jpg")
+        os.rename(old_image_path, new_image_path)
+        registered_users[new_name]["image_path"] = new_image_path
+        # Update the CSV file
+        try:
+            with open(CSV_FILE, "w", newline="") as file:
+                writer = csv.writer(file)
+                for name, data in registered_users.items():
+                    writer.writerow([name, os.path.join(ENCODINGS_DIR, f"{name}.npy"), data["image_path"]])
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to update CSV file: {e}")
+            return
+        # Update the treeview
+        tree.item(selected_item, values=(new_name, new_image_path))
+        messagebox.showinfo("Success", "Username updated successfully")
+
+    # Function to update a user's image
+    def update_image():
+        selected_item = tree.selection()
+        if not selected_item:
+            messagebox.showerror("Error", "No user selected")
+            return
+        name = tree.item(selected_item)["values"][0]
+        file_path = filedialog.askopenfilename()
+        if not file_path:
+            return
+        if not os.path.exists(file_path):
+            messagebox.showerror("Error", "Selected file does not exist")
+            return
+        # Save the new image
+        image_path = os.path.join(IMAGES_DIR, f"{name}.jpg")
+        cv2.imwrite(image_path, cv2.cvtColor(cv2.imread(file_path), cv2.COLOR_BGR2RGB))
+        # Update the registered_users dictionary
+        registered_users[name]["image_path"] = image_path
+        # Update the CSV file
+        try:
+            with open(CSV_FILE, "w", newline="") as file:
+                writer = csv.writer(file)
+                for name, data in registered_users.items():
+                    writer.writerow([name, os.path.join(ENCODINGS_DIR, f"{name}.npy"), data["image_path"]])
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to update CSV file: {e}")
+            return
+        # Update the treeview
+        tree.item(selected_item, values=(name, image_path))
+        messagebox.showinfo("Success", "User image updated successfully")
+
+    # Buttons for user management actions
+    tk.Button(users_window, text="Delete User", command=delete_user).pack(pady=5)
+    tk.Button(users_window, text="Update Username", command=update_username).pack(pady=5)
+    tk.Button(users_window, text="Update Image", command=update_image).pack(pady=5)
+
 # GUI Setup
 root = tk.Tk()
 root.title("User Tracker")
+
+# Set custom application icon
+try:
+    # Ensure the icon file exists and is in a supported format (e.g., .png, .ico)
+    root.iconphoto(False, tk.PhotoImage(file="icon.png"))  # Replace "icon.png" with your icon file
+except Exception as e:
+    print(f"Failed to load icon: {e}")
 
 tk.Label(root, text="Enter Name:").pack()
 name_entry = tk.Entry(root)
 name_entry.pack()
 
 tk.Button(root, text="Register User", command=register_user).pack(pady=5)
+tk.Button(root, text="Manage Users", command=manage_users).pack(pady=5)
 tk.Button(root, text="Start Tracking", command=start_tracking).pack(pady=5)
 tk.Button(root, text="View Report", command=view_report).pack(pady=5)
 
