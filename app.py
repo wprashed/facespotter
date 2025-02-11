@@ -339,8 +339,10 @@ def manage_users():
         if new_name in registered_users:
             messagebox.showerror("Error", "Username already exists")
             return
+
         # Update registered_users dictionary
         registered_users[new_name] = registered_users.pop(old_name)
+
         # Rename files
         old_encoding_path = os.path.join(ENCODINGS_DIR, f"{old_name}.npy")
         new_encoding_path = os.path.join(ENCODINGS_DIR, f"{new_name}.npy")
@@ -349,6 +351,11 @@ def manage_users():
         new_image_path = os.path.join(IMAGES_DIR, f"{new_name}.jpg")
         os.rename(old_image_path, new_image_path)
         registered_users[new_name]["image_path"] = new_image_path
+
+        # Update tracking_data dictionary
+        if old_name in tracking_data:
+            tracking_data[new_name] = tracking_data.pop(old_name)
+
         # Update the CSV file
         try:
             with open(CSV_FILE, "w", newline="") as file:
@@ -358,6 +365,27 @@ def manage_users():
         except Exception as e:
             messagebox.showerror("Error", f"Failed to update CSV file: {e}")
             return
+
+        # Update the user_tracking_report.csv file
+        report_file = "user_tracking_report.csv"
+        if os.path.exists(report_file):
+            rows = []
+            with open(report_file, "r") as file:
+                reader = csv.reader(file)
+                header = next(reader)  # Preserve the header
+                rows.append(header)
+                for row in reader:
+                    username, image_path, start_time, end_time, duration = row
+                    if username == old_name:
+                        row[0] = new_name  # Replace old username with new username
+                        row[1] = new_image_path  # Update image path
+                    rows.append(row)
+
+            # Rewrite the updated rows back to the report file
+            with open(report_file, "w", newline="") as file:
+                writer = csv.writer(file)
+                writer.writerows(rows)
+
         # Update the treeview
         tree.item(selected_item, values=(new_name, new_image_path))
         messagebox.showinfo("Success", "Username updated successfully")
