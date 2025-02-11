@@ -6,7 +6,7 @@ import os
 import csv
 from datetime import datetime
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox, ttk
 
 # Paths
 ENCODINGS_DIR = "encodings"
@@ -135,8 +135,48 @@ def start_tracking():
     cap.release()
     cv2.destroyAllWindows()
 
+# Function to view report with user filter
 def view_report():
-    os.system("notepad.exe user_tracking_report.csv")
+    # Create a new window for the report
+    report_window = tk.Toplevel(root)
+    report_window.title("User Tracking Report")
+    report_window.geometry("800x400")
+
+    # Dropdown for user selection
+    tk.Label(report_window, text="Filter by User:").pack(pady=5)
+    user_var = tk.StringVar(report_window)
+    user_dropdown = ttk.Combobox(report_window, textvariable=user_var, state="readonly")
+    user_dropdown['values'] = ["All"] + list(tracking_data.keys())
+    user_dropdown.current(0)
+    user_dropdown.pack(pady=5)
+
+    # Treeview for displaying the report
+    columns = ("Username", "Date", "Start Time", "End Time", "Total Time (s)")
+    tree = ttk.Treeview(report_window, columns=columns, show="headings")
+    for col in columns:
+        tree.heading(col, text=col)
+        tree.column(col, width=150)
+    tree.pack(fill="both", expand=True, padx=10, pady=10)
+
+    # Function to update the report based on the selected user
+    def update_report():
+        selected_user = user_var.get()
+        tree.delete(*tree.get_children())  # Clear existing rows
+
+        if os.path.exists("user_tracking_report.csv"):
+            with open("user_tracking_report.csv", "r") as file:
+                reader = csv.reader(file)
+                next(reader)  # Skip header
+                for row in reader:
+                    username, date, start_time, end_time, total_time = row
+                    if selected_user == "All" or username == selected_user:
+                        tree.insert("", "end", values=(username, date, start_time, end_time, total_time))
+
+    # Button to refresh the report
+    tk.Button(report_window, text="Refresh Report", command=update_report).pack(pady=10)
+
+    # Initial load of the report
+    update_report()
 
 # GUI Setup
 root = tk.Tk()
@@ -146,8 +186,8 @@ tk.Label(root, text="Enter Name:").pack()
 name_entry = tk.Entry(root)
 name_entry.pack()
 
-tk.Button(root, text="Register User", command=register_user).pack()
-tk.Button(root, text="Start Tracking", command=start_tracking).pack()
-tk.Button(root, text="View Report", command=view_report).pack()
+tk.Button(root, text="Register User", command=register_user).pack(pady=5)
+tk.Button(root, text="Start Tracking", command=start_tracking).pack(pady=5)
+tk.Button(root, text="View Report", command=view_report).pack(pady=5)
 
 root.mainloop()
