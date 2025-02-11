@@ -1,3 +1,4 @@
+import cv2
 import face_recognition
 import numpy as np
 import time
@@ -6,8 +7,6 @@ import csv
 from datetime import datetime, timedelta
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
-import imageio.v3 as iio  # Use imageio for camera access
-import cv2
 
 # Paths
 ENCODINGS_DIR = "encodings"
@@ -70,19 +69,27 @@ tracking_data = {}
 
 # Helper function to format time as HH:MM:SS
 def format_time(seconds):
-    return str(timedelta(seconds=int(seconds)))
+    return str(timedelta(seconds=int(seconds))).zfill(8)  # Ensures leading zeros (e.g., 01:10:56)
 
 # Start video capture
 def start_tracking():
-    # Use OpenCV to access the camera (camera index 0 for default camera)
-    camera = cv2.VideoCapture(0)
-    if not camera.isOpened():
-        messagebox.showerror("Error", "Failed to open camera")
+    cap = cv2.VideoCapture(0, cv2.CAP_AVFOUNDATION)  # Use AVFoundation backend for macOS
+    
+    # Check if the camera opened successfully
+    if not cap.isOpened():
+        messagebox.showerror("Error", "Unable to open camera. Please check your camera connection.")
         return
+    
+    # Set higher resolution for better face detection
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)  # Width
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)  # Height
+
+    # Timeout period (in seconds) to wait before closing an interval
+    TIMEOUT = 5  # Adjust this value as needed
 
     while True:
-        ret, frame = camera.read()
-        if not ret:
+        ret, frame = cap.read()
+        if not ret or frame is None:
             print("Failed to grab frame from the camera.")
             break
 
@@ -117,14 +124,16 @@ def start_tracking():
             else:
                 # If the last interval is closed, start a new one
                 if tracking_data[name]['intervals'][-1][1] is not None:
-                    tracking_data[name]['intervals'].append([current_time, None])
+                    # Check if the timeout period has passed since the last detection
+                    if current_time - tracking_data[name]['last_seen'] > TIMEOUT:
+                        tracking_data[name]['intervals'].append([current_time, None])
                 # Update last seen time
                 tracking_data[name]['last_seen'] = current_time
 
-            # Calculate the total tracked time for display
-            total_tracked_time = sum(
-                end - start for start, end in tracking_data[name]['intervals'] if end is not None
-            ) + (current_time - tracking_data[name]['intervals'][-1][0] if tracking_data[name]['intervals'][-1][1] is None else 0)
+            # Get the current active interval
+            active_interval = tracking_data[name]['intervals'][-1]
+            start_time, end_time = active_interval
+            active_duration = current_time - start_time if end_time is None else end_time - start_time
 
             # Scale back to original frame size
             top *= 2
@@ -133,14 +142,16 @@ def start_tracking():
             left *= 2
 
             cv2.rectangle(frame, (left, top), (right, bottom), (0, 255, 0), 2)
-            cv2.putText(frame, f"{name}: {format_time(total_tracked_time)}", 
+            cv2.putText(frame, f"{name}: {format_time(active_duration)}", 
                         (left, top - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
         
         # Close intervals for users who are no longer detected
         for name in tracking_data.keys():
             if name not in detected_users:
-                if tracking_data[name]['intervals'][-1][1] is None:  # If the last interval is open
-                    tracking_data[name]['intervals'][-1][1] = time.time()  # Close the interval
+                # Check if the timeout period has passed since the last detection
+                if time.time() - tracking_data[name]['last_seen'] > TIMEOUT:
+                    if tracking_data[name]['intervals'][-1][1] is None:  # If the last interval is open
+                        tracking_data[name]['intervals'][-1][1] = time.time()  # Close the interval
         
         # Show the frame
         cv2.imshow("User Tracker", frame)
@@ -167,6 +178,7 @@ def start_tracking():
                                  time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(end_time)) if end_time else "N/A",
                                  format_time(duration)])
     
+    cap.release()
     cv2.destroyAllWindows()
 
 # Function to view report with user filter
