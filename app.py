@@ -7,6 +7,7 @@ import csv
 from datetime import datetime, timedelta
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
+import uuid  # For generating random names
 
 # Paths
 ENCODINGS_DIR = "encodings"
@@ -15,7 +16,21 @@ CSV_FILE = "users.csv"
 # Ensure encoding directory exists
 os.makedirs(ENCODINGS_DIR, exist_ok=True)
 
-# Function to register new user
+# Load registered users from CSV and encodings directory
+def load_registered_users():
+    registered_users = {}
+    if os.path.exists(CSV_FILE):
+        with open(CSV_FILE, "r") as file:
+            reader = csv.reader(file)
+            for row in reader:
+                if len(row) != 2:
+                    continue
+                name, encoding_path = row
+                if os.path.exists(encoding_path):
+                    registered_users[name] = np.load(encoding_path)  # Load encodings properly
+    return registered_users
+
+# Function to register new user manually
 def register_user():
     name = name_entry.get().strip()
     if not name:
@@ -52,24 +67,19 @@ def register_user():
     else:
         messagebox.showerror("Error", "Could not detect a face, try another image.")
 
-# Load registered users
-registered_users = {}
-if os.path.exists(CSV_FILE):
-    with open(CSV_FILE, "r") as file:
-        reader = csv.reader(file)
-        for row in reader:
-            if len(row) != 2:
-                continue
-            name, encoding_path = row
-            if os.path.exists(encoding_path):
-                registered_users[name] = np.load(encoding_path)  # Load encodings properly
-
 # Initialize tracking data
 tracking_data = {}
 
 # Helper function to format time as HH:MM:SS
 def format_time(seconds):
     return str(timedelta(seconds=int(seconds))).zfill(8)  # Ensures leading zeros (e.g., 01:10:56)
+
+# Helper function to generate a random name
+def generate_random_name():
+    return f"User_{str(uuid.uuid4())[:8]}"  # Generate a unique name like "User_12345678"
+
+# Load registered users at startup
+registered_users = load_registered_users()
 
 # Start video capture
 def start_tracking():
@@ -113,6 +123,32 @@ def start_tracking():
                 if distance < min_distance:
                     min_distance = distance
                     name = registered_name
+            
+            # If the face is unknown, register it automatically
+            if name == "Unknown":
+                # Check if the face encoding already exists in the system
+                is_duplicate = False
+                for existing_encoding in registered_users.values():
+                    if face_recognition.face_distance([existing_encoding], face_encoding)[0] < 0.6:
+                        is_duplicate = True
+                        break
+                
+                if not is_duplicate:
+                    # Generate a random name and register the user
+                    random_name = generate_random_name()
+                    encoding_path = os.path.join(ENCODINGS_DIR, f"{random_name}.npy")
+                    
+                    # Save encoding
+                    np.save(encoding_path, face_encoding)
+                    
+                    # Append to CSV
+                    with open(CSV_FILE, "a", newline="") as file:
+                        writer = csv.writer(file)
+                        writer.writerow([random_name, encoding_path])
+                    
+                    # Add to registered users
+                    registered_users[random_name] = face_encoding
+                    name = random_name  # Update the name to the newly registered user
             
             # Add the user to the detected_users set
             detected_users.add(name)
