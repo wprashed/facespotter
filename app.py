@@ -1,12 +1,13 @@
-import cv2
 import face_recognition
 import numpy as np
 import time
 import os
 import csv
-from datetime import datetime
+from datetime import datetime, timedelta
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
+import imageio.v3 as iio  # Use imageio for camera access
+import cv2
 
 # Paths
 ENCODINGS_DIR = "encodings"
@@ -22,7 +23,6 @@ def register_user():
         messagebox.showerror("Error", "Please enter a name")
         return
     
-    # Simplify the file dialog to avoid potential issues
     file_path = filedialog.askopenfilename()
     if not file_path:
         messagebox.showerror("Error", "No file selected")
@@ -68,23 +68,29 @@ if os.path.exists(CSV_FILE):
 # Initialize tracking data
 tracking_data = {}
 
+# Helper function to format time as HH:MM:SS
+def format_time(seconds):
+    return str(timedelta(seconds=int(seconds)))
+
 # Start video capture
 def start_tracking():
-    cap = cv2.VideoCapture(0)
-    
-    # Reduce resolution for better performance
-    cap.set(3, 640)  # Width
-    cap.set(4, 480)  # Height
+    # Use OpenCV to access the camera (camera index 0 for default camera)
+    camera = cv2.VideoCapture(0)
+    if not camera.isOpened():
+        messagebox.showerror("Error", "Failed to open camera")
+        return
 
-    while cap.isOpened():
-        ret, frame = cap.read()
+    while True:
+        ret, frame = camera.read()
         if not ret:
+            print("Failed to grab frame from the camera.")
             break
 
         # Resize frame to speed up processing
         small_frame = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
         rgb_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
         
+        # Detect faces
         face_locations = face_recognition.face_locations(rgb_frame)
         face_encodings = face_recognition.face_encodings(rgb_frame, face_locations)
         
@@ -105,16 +111,21 @@ def start_tracking():
             detected_users.add(name)
 
             # Start or update tracking for this user
+            current_time = time.time()
             if name not in tracking_data:
-                tracking_data[name] = {'intervals': [[time.time(), None]]}  # Start a new interval
+                tracking_data[name] = {'intervals': [[current_time, None]], 'last_seen': current_time}
             else:
-                # If the last interval is open, keep it open
-                if tracking_data[name]['intervals'][-1][1] is None:
-                    pass  # Interval is already open
-                else:
-                    # Start a new interval if the previous one was closed
-                    tracking_data[name]['intervals'].append([time.time(), None])
-            
+                # If the last interval is closed, start a new one
+                if tracking_data[name]['intervals'][-1][1] is not None:
+                    tracking_data[name]['intervals'].append([current_time, None])
+                # Update last seen time
+                tracking_data[name]['last_seen'] = current_time
+
+            # Calculate the total tracked time for display
+            total_tracked_time = sum(
+                end - start for start, end in tracking_data[name]['intervals'] if end is not None
+            ) + (current_time - tracking_data[name]['intervals'][-1][0] if tracking_data[name]['intervals'][-1][1] is None else 0)
+
             # Scale back to original frame size
             top *= 2
             right *= 2
@@ -122,7 +133,7 @@ def start_tracking():
             left *= 2
 
             cv2.rectangle(frame, (left, top), (right, bottom), (0, 255, 0), 2)
-            cv2.putText(frame, f"{name}", 
+            cv2.putText(frame, f"{name}: {format_time(total_tracked_time)}", 
                         (left, top - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
         
         # Close intervals for users who are no longer detected
@@ -131,6 +142,7 @@ def start_tracking():
                 if tracking_data[name]['intervals'][-1][1] is None:  # If the last interval is open
                     tracking_data[name]['intervals'][-1][1] = time.time()  # Close the interval
         
+        # Show the frame
         cv2.imshow("User Tracker", frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
@@ -143,7 +155,7 @@ def start_tracking():
     # Generate report (exclude unknown users)
     with open("user_tracking_report.csv", "w", newline='') as file:
         writer = csv.writer(file)
-        writer.writerow(["Username", "Start Time", "End Time", "Duration (s)"])
+        writer.writerow(["Username", "Start Time", "End Time", "Duration (HH:MM:SS)"])
         for name, data in tracking_data.items():
             if name == "Unknown":  # Skip unknown users from the report
                 continue
@@ -153,9 +165,8 @@ def start_tracking():
                 writer.writerow([name, 
                                  time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(start_time)), 
                                  time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(end_time)) if end_time else "N/A",
-                                 duration])
+                                 format_time(duration)])
     
-    cap.release()
     cv2.destroyAllWindows()
 
 # Function to view report with user filter
@@ -174,7 +185,7 @@ def view_report():
     user_dropdown.pack(pady=5)
 
     # Treeview for displaying the report
-    columns = ("Username", "Start Time", "End Time", "Duration (s)")
+    columns = ("Username", "Start Time", "End Time", "Duration (HH:MM:SS)")
     tree = ttk.Treeview(report_window, columns=columns, show="headings")
     for col in columns:
         tree.heading(col, text=col)
