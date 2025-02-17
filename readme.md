@@ -1,6 +1,6 @@
-# User Tracker Application
+# Face Spotter
 
-The **User Tracker** application is a Python-based tool designed to detect, track, and manage users via facial recognition. It allows you to register users, track their activity in real-time using a camera, generate reports, and manage user details (e.g., rename or update images).
+The **Face Spotter** application is a Python-based tool designed to detect, track, and manage users via facial recognition. It allows you to register users, track their activity in real-time using a camera, generate reports, and manage user details (e.g., rename or update images).
 
 ---
 
